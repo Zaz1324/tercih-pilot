@@ -107,6 +107,49 @@ input[type="range"]::-webkit-slider-thumb {
   mask-image: linear-gradient(to bottom, black, transparent 78%);
 }
 
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 0.5rem;
+  background: rgb(255 255 255 / 0.035);
+  padding: 0.5rem 0.75rem;
+  color: rgb(203 213 225);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1rem;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.action-button:hover {
+  background: rgb(255 255 255 / 0.07);
+  color: #ffffff;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 0.75rem;
+  background: rgb(255 255 255 / 0.035);
+  padding: 0.625rem;
+  color: rgb(148 163 184);
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.icon-button:hover {
+  background: rgb(255 255 255 / 0.07);
+  color: #ffffff;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
