@@ -1,5 +1,6 @@
 import {
   UNIVERSITY_STATUSES,
+  type AcademicStaffSummary,
   type Professor,
   type ProfessorProfile,
   type RankingHistoryItem,
@@ -21,6 +22,15 @@ function asFiniteNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function asOptionalFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asNonNegativeInteger(value: unknown): number | undefined {
+  const numeric = asOptionalFiniteNumber(value);
+  return numeric === undefined ? undefined : Math.max(0, Math.round(numeric));
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -29,7 +39,6 @@ function asIsoDate(value: unknown, fallback: string): string {
   if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
     return fallback;
   }
-
   return new Date(value).toISOString();
 }
 
@@ -46,15 +55,11 @@ export function createId(prefix = "item"): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
-
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function normalizeProfessorProfile(value: unknown): ProfessorProfile | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
+  if (!isRecord(value)) return undefined;
   return {
     sourceUrl: asString(value.sourceUrl).trim() || undefined,
     lastUpdated: asString(value.lastUpdated).trim() || undefined,
@@ -75,15 +80,9 @@ function normalizeProfessorProfile(value: unknown): ProfessorProfile | undefined
 }
 
 function normalizeProfessor(value: unknown): Professor | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
+  if (!isRecord(value)) return null;
   const name = asString(value.name).trim();
-  if (!name) {
-    return null;
-  }
-
+  if (!name) return null;
   return {
     id: asString(value.id).trim() || createId("prof"),
     name,
@@ -95,34 +94,51 @@ function normalizeProfessor(value: unknown): Professor | null {
     researcherId: asString(value.researcherId).trim() || undefined,
     orcid: asString(value.orcid).trim() || undefined,
     profile: normalizeProfessorProfile(value.profile),
-    profileFetchedAt:
-      asIsoDate(value.profileFetchedAt, "").trim() || undefined,
+    profileFetchedAt: asIsoDate(value.profileFetchedAt, "").trim() || undefined,
   };
 }
 
-function normalizeRankingHistoryItem(
-  value: unknown,
-): RankingHistoryItem | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
+function normalizeRankingHistoryItem(value: unknown): RankingHistoryItem | null {
+  if (!isRecord(value)) return null;
   const year = Math.round(asFiniteNumber(value.year, 0));
   const ranking = Math.round(asFiniteNumber(value.ranking, 0));
-  if (year < 2000 || ranking < 1) {
-    return null;
-  }
-
-  const baseScore =
-    typeof value.baseScore === "number" && Number.isFinite(value.baseScore)
-      ? value.baseScore
-      : undefined;
-
+  if (year < 2000 || ranking < 1) return null;
   return {
     year,
     ranking,
-    baseScore,
+    baseScore: asOptionalFiniteNumber(value.baseScore),
   };
+}
+
+function normalizeAcademicStaffSummary(
+  value: unknown,
+): AcademicStaffSummary | undefined {
+  if (!isRecord(value)) return undefined;
+  const professor = asNonNegativeInteger(value.professor) ?? 0;
+  const associateProfessor = asNonNegativeInteger(value.associateProfessor) ?? 0;
+  const doctorFacultyMember = asNonNegativeInteger(value.doctorFacultyMember) ?? 0;
+  const lecturer = asNonNegativeInteger(value.lecturer) ?? 0;
+  const researchAssistant = asNonNegativeInteger(value.researchAssistant) ?? 0;
+  const calculatedTotal =
+    professor +
+    associateProfessor +
+    doctorFacultyMember +
+    lecturer +
+    researchAssistant;
+  const total = Math.max(
+    calculatedTotal,
+    asNonNegativeInteger(value.total) ?? calculatedTotal,
+  );
+  return total > 0
+    ? {
+        professor,
+        associateProfessor,
+        doctorFacultyMember,
+        lecturer,
+        researchAssistant,
+        total,
+      }
+    : undefined;
 }
 
 function isUniversityStatus(value: unknown): value is UniversityStatus {
@@ -132,33 +148,29 @@ function isUniversityStatus(value: unknown): value is UniversityStatus {
   );
 }
 
-export function normalizeUniversity(
+function normalizeEducationLevel(
   value: unknown,
-): UniversityProgram | null {
-  if (!isRecord(value)) {
-    return null;
-  }
+): "Lisans" | "Önlisans" | undefined {
+  return value === "Lisans" || value === "Önlisans" ? value : undefined;
+}
+
+export function normalizeUniversity(value: unknown): UniversityProgram | null {
+  if (!isRecord(value)) return null;
 
   const universityName = asString(value.universityName).trim();
   const programName = asString(value.programName).trim();
   const city = asString(value.city).trim();
   const ranking = Math.round(asFiniteNumber(value.ranking, 0));
-
-  if (!universityName || !programName || !city || ranking < 1) {
-    return null;
-  }
+  if (!universityName || !programName || !city || ranking < 1) return null;
 
   const now = new Date().toISOString();
-  const facilities = Array.isArray(value.facilities)
-    ? [
-        ...new Set(
-          value.facilities
-            .filter((item): item is string => typeof item === "string")
-            .map((item) => item.trim())
-            .filter(Boolean),
-        ),
-      ]
-    : [];
+  const facilities = [
+    ...new Set(
+      asStringArray(value.facilities)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
   const professors = Array.isArray(value.professors)
     ? value.professors
         .map(normalizeProfessor)
@@ -167,11 +179,12 @@ export function normalizeUniversity(
   const rankingHistory = Array.isArray(value.rankingHistory)
     ? value.rankingHistory
         .map(normalizeRankingHistoryItem)
-        .filter(
-          (item): item is RankingHistoryItem => item !== null,
-        )
+        .filter((item): item is RankingHistoryItem => item !== null)
         .sort((a, b) => b.year - a.year)
     : [];
+
+  const tuitionFee = asOptionalFiniteNumber(value.tuitionFee);
+  const baseTuitionFee = asOptionalFiniteNumber(value.baseTuitionFee);
 
   return {
     id: asString(value.id).trim() || createId("university"),
@@ -194,41 +207,32 @@ export function normalizeUniversity(
     professors,
     atlasCode: asString(value.atlasCode).trim() || undefined,
     atlasUrl: asString(value.atlasUrl).trim() || undefined,
-    academicStaffUrl:
-      asString(value.academicStaffUrl).trim() || undefined,
+    academicStaffUrl: asString(value.academicStaffUrl).trim() || undefined,
     scholarship: asString(value.scholarship).trim() || undefined,
-    tuitionFee:
-      typeof value.tuitionFee === "number" &&
-      Number.isFinite(value.tuitionFee)
-        ? Math.max(0, value.tuitionFee)
-        : undefined,
+    tuitionFee: tuitionFee === undefined ? undefined : Math.max(0, tuitionFee),
     baseTuitionFee:
-      typeof value.baseTuitionFee === "number" &&
-      Number.isFinite(value.baseTuitionFee)
-        ? Math.max(0, value.baseTuitionFee)
-        : undefined,
-    lastAtlasSyncAt:
-      asIsoDate(value.lastAtlasSyncAt, "").trim() || undefined,
+      baseTuitionFee === undefined ? undefined : Math.max(0, baseTuitionFee),
+    lastAtlasSyncAt: asIsoDate(value.lastAtlasSyncAt, "").trim() || undefined,
     universityType: asString(value.universityType).trim() || undefined,
     facultyName: asString(value.facultyName).trim() || undefined,
     district: asString(value.district).trim() || undefined,
     pointType: asString(value.pointType).trim() || undefined,
-    baseScore:
-      typeof value.baseScore === "number" &&
-      Number.isFinite(value.baseScore)
-        ? value.baseScore
-        : undefined,
-    quota:
-      typeof value.quota === "number" && Number.isFinite(value.quota)
-        ? Math.max(0, Math.round(value.quota))
-        : undefined,
-    atlasYear:
-      typeof value.atlasYear === "number" && Number.isFinite(value.atlasYear)
-        ? Math.round(value.atlasYear)
-        : undefined,
-    academicHierarchy:
-      asString(value.academicHierarchy).trim() || undefined,
+    baseScore: asOptionalFiniteNumber(value.baseScore),
+    quota: asNonNegativeInteger(value.quota),
+    atlasYear: asNonNegativeInteger(value.atlasYear),
+    academicHierarchy: asString(value.academicHierarchy).trim() || undefined,
     rankingHistory,
+    educationLevel: normalizeEducationLevel(value.educationLevel),
+    educationType: asString(value.educationType).trim() || undefined,
+    educationLanguage: asString(value.educationLanguage).trim() || undefined,
+    educationDuration: asNonNegativeInteger(value.educationDuration),
+    occupancy: asString(value.occupancy).trim() || undefined,
+    placed: asNonNegativeInteger(value.placed),
+    previousRanking: asNonNegativeInteger(value.previousRanking),
+    previousBaseScore: asOptionalFiniteNumber(value.previousBaseScore),
+    academicStaffSummary: normalizeAcademicStaffSummary(
+      value.academicStaffSummary,
+    ),
     createdAt: asIsoDate(value.createdAt, now),
     updatedAt: asIsoDate(value.updatedAt, now),
   };
@@ -248,7 +252,6 @@ export function normalizePreferenceOrders(
   const orderMap = new Map(
     orderedIds.map((id, index) => [id, index + 1] as const),
   );
-
   return universities.map((university) => ({
     ...university,
     preferenceOrder: orderMap.get(university.id) ?? 0,
@@ -256,10 +259,7 @@ export function normalizePreferenceOrders(
 }
 
 export function parseUniversityArray(value: unknown): UniversityProgram[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
+  if (!Array.isArray(value)) return [];
   const seenIds = new Set<string>();
   const normalized = value
     .map(normalizeUniversity)
@@ -270,21 +270,16 @@ export function parseUniversityArray(value: unknown): UniversityProgram[] {
       if (seenIds.has(university.id)) {
         return { ...university, id: createId("university") };
       }
-
       seenIds.add(university.id);
       return university;
     });
-
   return normalizePreferenceOrders(normalized);
 }
 
 export function loadUniversities(): UniversityProgram[] {
   try {
     const rawValue = window.localStorage.getItem(STORAGE_KEY);
-    if (!rawValue) {
-      return [];
-    }
-
+    if (!rawValue) return [];
     return parseUniversityArray(JSON.parse(rawValue));
   } catch {
     return [];
