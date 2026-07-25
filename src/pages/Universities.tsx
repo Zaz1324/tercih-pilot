@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type LucideIcon,
   Award,
@@ -64,6 +64,9 @@ const DEFAULT_FILTERS: LiveFilters = {
   sort: "ranking",
 };
 
+const POINT_TYPES = ["SAY", "EA", "SÖZ", "DİL", "TYT"];
+const UNIVERSITY_TYPES = ["Devlet", "Vakıf", "KKTC", "Yurt Dışı"];
+
 const inputClass =
   "w-full rounded-xl border border-white/[0.08] bg-ink-950/60 px-3.5 py-2.5 text-xs font-semibold text-white outline-none transition placeholder:text-slate-700 focus:border-pilot-400/50 focus:ring-2 focus:ring-pilot-500/10";
 
@@ -102,6 +105,9 @@ export function Universities() {
   const [loadingStaffId, setLoadingStaffId] = useState<string | null>(null);
   const [loadingProfileId, setLoadingProfileId] = useState<string | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const firstSearchDone = useRef(false);
   const [profileTarget, setProfileTarget] = useState<{
     university: UniversityProgram;
     professor: Professor;
@@ -140,6 +146,45 @@ export function Universities() {
     };
   }, [notify]);
 
+  const searchKey = useMemo(
+    () => JSON.stringify({ filters, refreshNonce }),
+    [filters, refreshNonce],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const delay = firstSearchDone.current ? 450 : 80;
+
+    const timer = window.setTimeout(async () => {
+      setLoadingSearch(true);
+      setSearchError(null);
+      try {
+        const livePrograms = await searchYokAtlas(filters);
+        if (cancelled) return;
+        setResults(livePrograms);
+        setSelectedId((current) =>
+          livePrograms.some((program) => program.id === current)
+            ? current
+            : livePrograms[0]?.id ?? null,
+        );
+        setLastSyncAt(new Date().toISOString());
+        firstSearchDone.current = true;
+      } catch (error) {
+        if (cancelled) return;
+        setSearchError(
+          error instanceof Error ? error.message : "YÖK Atlas araması başarısız.",
+        );
+      } finally {
+        if (!cancelled) setLoadingSearch(false);
+      }
+    }, delay);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [searchKey, filters]);
+
   const storedKeys = useMemo(
     () => new Set(universities.map(getProgramKey)),
     [universities],
@@ -156,28 +201,8 @@ export function Universities() {
   const selected =
     visible.find((program) => program.id === selectedId) ?? visible[0] ?? null;
 
-  const runSearch = async (event?: FormEvent<HTMLFormElement>) => {
-    event?.preventDefault();
-    setLoadingSearch(true);
-    try {
-      const livePrograms = await searchYokAtlas(filters);
-      setResults(livePrograms);
-      setSelectedId(livePrograms[0]?.id ?? null);
-      setLastSyncAt(new Date().toISOString());
-      notify(
-        livePrograms.length
-          ? `${livePrograms.length} program YÖK Atlas'tan anlık çekildi.`
-          : "YÖK Atlas araması sonuç döndürmedi.",
-        livePrograms.length ? "success" : "info",
-      );
-    } catch (error) {
-      notify(
-        error instanceof Error ? error.message : "YÖK Atlas araması başarısız.",
-        "error",
-      );
-    } finally {
-      setLoadingSearch(false);
-    }
+  const setFilter = <K extends keyof LiveFilters>(key: K, value: LiveFilters[K]) => {
+    setFilters((current) => ({ ...current, [key]: value }));
   };
 
   const storeProgram = (program: UniversityProgram, addToPreference = false) => {
@@ -291,21 +316,20 @@ export function Universities() {
               YÖK Atlas canlı arama
             </p>
             <h2 className="mt-2 text-2xl font-black tracking-tight text-white sm:text-3xl">
-              Programları anlık çek ve filtrele
+              Sayfa açılır açılmaz veri çeker; yazdıkça yeniler
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-              Ana veri kaynağı artık YÖK Atlas proxy. Elle kayıt akışı kaldırıldı;
-              sonuçlar canlı çekilir, filtrelenir ve yalnızca seçtiklerin tercih havuzuna alınır.
+              Ana liste YÖK Atlas sonucudur. Kutucuklara basabilir veya doğrudan yazabilirsin; arama otomatik çalışır. Elle kayıt sadece seçili programı tercih havuzuna almak için kullanılır.
             </p>
           </div>
           <button
             type="button"
-            onClick={() => runSearch()}
+            onClick={() => setRefreshNonce((current) => current + 1)}
             disabled={loadingSearch}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-pilot-500 px-4 py-2.5 text-sm font-extrabold text-white shadow-glow transition hover:bg-pilot-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loadingSearch ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
-            YÖK Atlas'tan Çek
+            YÖK Atlas'ı Yenile
           </button>
         </div>
       </section>
@@ -317,83 +341,106 @@ export function Universities() {
         <Metric
           icon={Filter}
           label="Son çekim"
-          value={lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—"}
+          value={lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : loadingSearch ? "Çekiliyor" : "—"}
         />
       </section>
 
-      <form onSubmit={runSearch} className="rounded-3xl border border-white/[0.08] bg-white/[0.03] p-4 shadow-panel sm:p-5">
+      <section className="rounded-3xl border border-white/[0.08] bg-white/[0.03] p-4 shadow-panel sm:p-5">
         <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-center">
           <div>
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="size-4 text-pilot-300" />
-              <h3 className="text-sm font-extrabold text-white">YÖK Atlas filtreleri</h3>
+              <h3 className="text-sm font-extrabold text-white">Canlı filtre kutucukları</h3>
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              Filtreler canlı arama kriteri olarak gönderilir; gelen sonuçlar ayrıca ekranda filtrelenir.
+              Buton yok: her yazış ve kutucuk seçimi YÖK Atlas aramasını otomatik yeniler.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={!isFiltered(filters)}
-              onClick={() => setFilters(DEFAULT_FILTERS)}
-              className="inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.035] px-3.5 py-2.5 text-xs font-extrabold text-slate-300 transition hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <RotateCcw className="size-4" />
-              Filtreleri Temizle
-            </button>
-            <button
-              type="submit"
-              disabled={loadingSearch}
-              className="inline-flex items-center gap-2 rounded-xl bg-pilot-500 px-3.5 py-2.5 text-xs font-extrabold text-white transition hover:bg-pilot-400 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loadingSearch ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-              Canlı Ara
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={!isFiltered(filters)}
+            onClick={() => setFilters(DEFAULT_FILTERS)}
+            className="inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.035] px-3.5 py-2.5 text-xs font-extrabold text-slate-300 transition hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <RotateCcw className="size-4" />
+            Filtreleri Temizle
+          </button>
         </div>
 
-        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(220px,1.4fr)_minmax(180px,1fr)_minmax(180px,1fr)_160px_160px]">
-          <TextBox label="Genel arama" value={filters.query ?? ""} onChange={(query) => setFilters((current) => ({ ...current, query }))} placeholder="Üniversite, bölüm veya şehir" />
-          <TextBox label="Üniversite" value={filters.university ?? ""} onChange={(university) => setFilters((current) => ({ ...current, university }))} placeholder="Üniversite seç / yaz" listId="atlas-universities" />
-          <TextBox label="Program" value={filters.program ?? ""} onChange={(program) => setFilters((current) => ({ ...current, program }))} placeholder="Program seç / yaz" listId="atlas-programs" />
-          <TextBox label="Şehir" value={filters.city ?? ""} onChange={(city) => setFilters((current) => ({ ...current, city }))} placeholder="İl seç / yaz" listId="atlas-cities" />
+        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(240px,1.3fr)_minmax(220px,1fr)_minmax(220px,1fr)]">
+          <TextBox
+            label="Yazdıkça ara"
+            value={filters.query ?? ""}
+            onChange={(query) => setFilter("query", query)}
+            placeholder="Üniversite, bölüm, şehir veya fakülte"
+          />
+          <SmartFilter
+            label="Üniversite"
+            value={filters.university ?? ""}
+            onChange={(university) => setFilter("university", university)}
+            options={options.universities}
+            placeholder="Üniversite yaz veya kutucuk seç"
+          />
+          <SmartFilter
+            label="Program"
+            value={filters.program ?? ""}
+            onChange={(program) => setFilter("program", program)}
+            options={options.programs}
+            placeholder="Program yaz veya kutucuk seç"
+          />
+        </div>
+
+        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_160px_160px_180px]">
+          <SmartFilter
+            label="Şehir"
+            value={filters.city ?? ""}
+            onChange={(city) => setFilter("city", city)}
+            options={options.cities}
+            placeholder="Şehir yaz veya kutucuk seç"
+            limit={12}
+          />
           <label className="block text-[10px] font-bold uppercase tracking-[0.13em] text-slate-600">
             Sıralama
-            <select value={filters.sort} onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value as SortKey }))} className={`${inputClass} mt-2`}>
+            <select value={filters.sort} onChange={(event) => setFilter("sort", event.target.value as SortKey)} className={`${inputClass} mt-2`}>
               <option value="ranking">Başarı sırası</option>
               <option value="recommendation">Öneri puanı</option>
               <option value="score">Taban puan</option>
               <option value="name">Üniversite adı</option>
             </select>
           </label>
-        </div>
-
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <TextBox label="Puan türü" value={filters.pointType ?? ""} onChange={(pointType) => setFilters((current) => ({ ...current, pointType }))} placeholder="SAY, EA, SÖZ, DİL" />
-          <TextBox label="Üniversite türü" value={filters.universityType ?? ""} onChange={(universityType) => setFilters((current) => ({ ...current, universityType }))} placeholder="Devlet / Vakıf" />
-          <NumberBox label="Min. başarı sırası" value={filters.minRanking ?? ""} onChange={(minRanking) => setFilters((current) => ({ ...current, minRanking }))} />
-          <NumberBox label="Maks. başarı sırası" value={filters.maxRanking ?? ""} onChange={(maxRanking) => setFilters((current) => ({ ...current, maxRanking }))} />
+          <NumberBox label="Min. başarı sırası" value={filters.minRanking ?? ""} onChange={(minRanking) => setFilter("minRanking", minRanking)} />
+          <NumberBox label="Maks. başarı sırası" value={filters.maxRanking ?? ""} onChange={(maxRanking) => setFilter("maxRanking", maxRanking)} />
           <div className="grid gap-2 pt-5">
-            <Toggle label="Akademik kadro linki olanlar" checked={filters.onlyWithAcademicLink} onChange={(onlyWithAcademicLink) => setFilters((current) => ({ ...current, onlyWithAcademicLink }))} />
-            <Toggle label="Özgeçmişi çekilmiş hocalar" checked={filters.onlyWithProfile} onChange={(onlyWithProfile) => setFilters((current) => ({ ...current, onlyWithProfile }))} />
+            <Toggle label="Akademik kadro linki olanlar" checked={filters.onlyWithAcademicLink} onChange={(onlyWithAcademicLink) => setFilter("onlyWithAcademicLink", onlyWithAcademicLink)} />
+            <Toggle label="Özgeçmişi çekilmiş hocalar" checked={filters.onlyWithProfile} onChange={(onlyWithProfile) => setFilter("onlyWithProfile", onlyWithProfile)} />
           </div>
         </div>
 
-        <datalist id="atlas-universities">{options.universities.map((option) => <option key={option.id} value={option.value} />)}</datalist>
-        <datalist id="atlas-programs">{options.programs.map((option) => <option key={option.id} value={option.value} />)}</datalist>
-        <datalist id="atlas-cities">{options.cities.map((option) => <option key={option.id} value={option.value} />)}</datalist>
-        {loadingOptions && <p className="mt-3 text-xs font-semibold text-slate-600">YÖK Atlas filtre seçenekleri yükleniyor...</p>}
-      </form>
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <QuickChips title="Puan türü" values={POINT_TYPES} selected={filters.pointType ?? ""} onSelect={(pointType) => setFilter("pointType", pointType)} />
+          <QuickChips title="Üniversite türü" values={UNIVERSITY_TYPES} selected={filters.universityType ?? ""} onSelect={(universityType) => setFilter("universityType", universityType)} />
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
+          {loadingSearch && <span className="inline-flex items-center gap-2 text-pilot-300"><Loader2 className="size-3.5 animate-spin" />YÖK Atlas verisi çekiliyor...</span>}
+          {loadingOptions && <span>Filtre kutucukları yükleniyor...</span>}
+          {searchError && <span className="text-rose-300">{searchError}</span>}
+        </div>
+      </section>
 
       {results.length === 0 ? (
-        <EmptyState
-          icon={Database}
-          title="Henüz YÖK Atlas verisi çekilmedi"
-          description="Üniversite, program veya şehir filtresi girip Canlı Ara butonuna bas. Sonuçlar YÖK Atlas proxy üzerinden anlık alınacak."
-          actionLabel="YÖK Atlas'tan Çek"
-          onAction={() => runSearch()}
-        />
+        loadingSearch ? (
+          <div className="rounded-3xl border border-white/[0.08] bg-white/[0.03] p-10 text-center text-sm font-bold text-slate-400">
+            <Loader2 className="mx-auto mb-3 size-6 animate-spin text-pilot-300" />
+            Başlangıç verisi YÖK Atlas'tan çekiliyor.
+          </div>
+        ) : (
+          <EmptyState
+            icon={Database}
+            title="YÖK Atlas sonuç döndürmedi"
+            description="Filtreleri temizle veya daha genel bir kelime yaz. Arama artık butona ihtiyaç duymadan otomatik çalışıyor."
+          />
+        )
       ) : (
         <section className="grid gap-5 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
           <div className="space-y-3">
@@ -410,7 +457,11 @@ export function Universities() {
                 onLoadStaff={() => loadStaff(program)}
               />
             ))}
-            {visible.length === 0 && <div className="rounded-3xl border border-white/[0.08] bg-white/[0.03] p-8 text-center text-sm font-semibold text-slate-500">Canlı sonuç geldi ama aktif filtrelere uyan kayıt yok.</div>}
+            {visible.length === 0 && (
+              <div className="rounded-3xl border border-white/[0.08] bg-white/[0.03] p-8 text-center text-sm font-semibold text-slate-500">
+                Canlı sonuç geldi ama aktif filtrelere uyan kayıt yok.
+              </div>
+            )}
           </div>
 
           <aside className="xl:sticky xl:top-5 xl:self-start">
@@ -485,47 +536,51 @@ function ProgramDetail({ program, stored, loadingStaff, loadingProfileId, onStor
   onLoadStaff: () => void;
   onOpenProfile: (professor: Professor) => void;
 }) {
-  const professorScore = calculateAverageProfessorScore(program.professors);
+  const averageProfessorScore = calculateAverageProfessorScore(program.professors);
   return (
-    <section className="overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.04] shadow-panel">
-      <div className="border-b border-white/[0.07] p-5">
-        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-pilot-300">YÖK Atlas detayı</p>
-        <h3 className="mt-2 text-xl font-black leading-7 text-white">{program.universityName}</h3>
+    <section className="overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.03] shadow-panel">
+      <div className="border-b border-white/[0.08] p-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-pilot-300">Canlı detay</p>
+        <h3 className="mt-2 text-xl font-black leading-6 text-white">{program.universityName}</h3>
         <p className="mt-1 text-sm font-bold leading-5 text-slate-300">{program.programName}</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <ActionButton onClick={onStore} disabled={stored}>{stored ? "Tercih havuzunda" : "Tercih havuzuna al"}</ActionButton>
-          <ActionButton onClick={onPreference}>Tercih listesine ekle</ActionButton>
           {program.atlasUrl && <a href={program.atlasUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 py-2 text-xs font-extrabold text-slate-300 transition hover:bg-white/[0.07]"><ExternalLink className="size-3.5" />Atlas</a>}
+          <ActionButton onClick={onStore} disabled={stored}>{stored ? "Havuzda" : "Havuza Al"}</ActionButton>
+          <ActionButton onClick={onPreference}>Tercihe Ekle</ActionButton>
+          <ActionButton onClick={onLoadStaff} disabled={loadingStaff}>{loadingStaff ? "Kadro çekiliyor" : "Kadroyu Çek"}</ActionButton>
         </div>
       </div>
-      <div className="grid gap-3 p-5 sm:grid-cols-2">
-        <DetailItem icon={MapPin} label="Şehir" value={program.city} />
-        <DetailItem icon={Building2} label="Üniversite türü" value={program.universityType ?? "—"} />
-        <DetailItem icon={BookOpenText} label="Fakülte" value={program.facultyName ?? "—"} />
-        <DetailItem icon={Award} label="Başarı sırası" value={formatRanking(program.ranking)} />
-        <DetailItem icon={Star} label="Taban puan" value={program.baseScore ? program.baseScore.toFixed(2) : "—"} />
-        <DetailItem icon={Banknote} label="Ücret" value={formatCurrency(program.tuitionFee)} />
-        <DetailItem icon={GraduationCap} label="Hoca ortalaması" value={`${formatProfessorScore(professorScore)}${professorScore ? "/10" : ""}`} />
-        <DetailItem icon={UsersRound} label="Hoca sayısı" value={`${program.professors.length}`} />
-      </div>
-      <div className="border-t border-white/[0.07] p-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h4 className="text-sm font-black text-white">Akademik kadro</h4>
-            <p className="mt-1 text-xs text-slate-600">Kadro ve özgeçmişler YÖK Akademik proxy üzerinden canlı çekilir.</p>
+      <div className="space-y-5 p-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DetailItem icon={MapPin} label="Şehir" value={program.city} />
+          <DetailItem icon={Building2} label="Tür" value={program.universityType ?? "—"} />
+          <DetailItem icon={BookOpenText} label="Fakülte" value={program.facultyName ?? "—"} />
+          <DetailItem icon={Award} label="Başarı sırası" value={formatRanking(program.ranking)} />
+          <DetailItem icon={GraduationCap} label="Taban puan" value={program.baseScore ? program.baseScore.toFixed(2) : "—"} />
+          <DetailItem icon={Banknote} label="Burs / ücret" value={[program.scholarship, formatCurrency(program.tuitionFee)].filter((item) => item && item !== "—").join(" · ") || "—"} />
+        </div>
+        <div>
+          <h4 className="text-sm font-black text-white">İmkân / etiket</h4>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {program.facilities.length ? program.facilities.map((facility) => <span key={facility} className="rounded-lg bg-cyan-500/[0.08] px-2.5 py-1.5 text-[10px] font-bold text-cyan-300">{facility}</span>) : <span className="text-sm text-slate-600">YÖK Atlas sonucunda ek etiket yok.</span>}
           </div>
-          <ActionButton onClick={onLoadStaff} disabled={loadingStaff}>{loadingStaff ? "Çekiliyor" : "Kadroyu Çek"}</ActionButton>
         </div>
-        <div className="mt-4 space-y-2">
-          {program.professors.length ? program.professors.map((professor) => (
-            <button key={professor.id} type="button" onClick={() => onOpenProfile(professor)} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/[0.07] bg-ink-950/30 p-3 text-left transition hover:border-pilot-400/25 hover:bg-pilot-500/[0.05]">
-              <div className="min-w-0">
-                <p className="text-sm font-extrabold text-white">{[professor.title, professor.name].filter(Boolean).join(" ")}</p>
-                <p className="mt-1 text-xs text-slate-600">{professor.field || professor.note || "YÖK Akademik kaydı"}</p>
-              </div>
-              {loadingProfileId === professor.id ? <Loader2 className="size-4 shrink-0 animate-spin text-pilot-300" /> : <UserRound className="size-4 shrink-0 text-slate-600" />}
-            </button>
-          )) : <p className="rounded-2xl border border-dashed border-white/[0.08] p-4 text-sm text-slate-600">Henüz kadro çekilmedi. “Kadroyu Çek” butonunu kullan.</p>}
+        <div>
+          <div className="flex items-center justify-between gap-3">
+            <h4 className="text-sm font-black text-white">Akademik kadro</h4>
+            <span className="text-xs font-bold text-slate-600">Ortalama: {formatProfessorScore(averageProfessorScore)}</span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {program.professors.length ? program.professors.map((professor) => (
+              <button key={professor.id} type="button" onClick={() => onOpenProfile(professor)} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/[0.07] bg-ink-950/30 p-3 text-left transition hover:border-pilot-400/25 hover:bg-pilot-500/[0.05]">
+                <div className="min-w-0">
+                  <p className="text-sm font-extrabold text-white">{[professor.title, professor.name].filter(Boolean).join(" ")}</p>
+                  <p className="mt-1 text-xs text-slate-600">{professor.field || professor.note || "YÖK Akademik kaydı"}</p>
+                </div>
+                {loadingProfileId === professor.id ? <Loader2 className="size-4 shrink-0 animate-spin text-pilot-300" /> : <UserRound className="size-4 shrink-0 text-slate-600" />}
+              </button>
+            )) : <p className="rounded-2xl border border-dashed border-white/[0.08] p-4 text-sm text-slate-600">Henüz kadro çekilmedi. “Kadroyu Çek” butonunu kullan.</p>}
+          </div>
         </div>
       </div>
     </section>
@@ -556,8 +611,17 @@ function ProfessorProfileModal({ university, professor, loading, onClose }: { un
   );
 }
 
-function TextBox({ label, value, onChange, placeholder, listId }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; listId?: string }) {
-  return <label className="block text-[10px] font-bold uppercase tracking-[0.13em] text-slate-600">{label}<span className="relative mt-2 block"><input value={value} list={listId} onChange={(event) => onChange(event.target.value)} className={inputClass} placeholder={placeholder} />{value && <button type="button" onClick={() => onChange("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-700 transition hover:text-white" aria-label={`${label} alanını temizle`}><X className="size-3.5" /></button>}</span></label>;
+function TextBox({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  return <label className="block text-[10px] font-bold uppercase tracking-[0.13em] text-slate-600">{label}<span className="relative mt-2 block"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-700" /><input value={value} onChange={(event) => onChange(event.target.value)} className={`${inputClass} pl-10 pr-9`} placeholder={placeholder} />{value && <button type="button" onClick={() => onChange("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-700 transition hover:text-white" aria-label={`${label} alanını temizle`}><X className="size-3.5" /></button>}</span></label>;
+}
+
+function SmartFilter({ label, value, onChange, options, placeholder, limit = 8 }: { label: string; value: string; onChange: (value: string) => void; options: AtlasOption[]; placeholder?: string; limit?: number }) {
+  const suggestions = suggestOptions(options, value, limit);
+  return <div><TextBox label={label} value={value} onChange={onChange} placeholder={placeholder} />{suggestions.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{suggestions.map((option) => <button key={`${label}-${option.id}`} type="button" onClick={() => onChange(option.value)} className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold transition ${normalize(value) === normalize(option.value) ? "border-pilot-400/40 bg-pilot-500/15 text-pilot-200" : "border-white/[0.08] bg-white/[0.035] text-slate-500 hover:border-white/[0.16] hover:text-slate-200"}`}>{option.label}</button>)}</div>}</div>;
+}
+
+function QuickChips({ title, values, selected, onSelect }: { title: string; values: string[]; selected: string; onSelect: (value: string) => void }) {
+  return <div><p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-600">{title}</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => onSelect("")} className={`rounded-full border px-3 py-1.5 text-[10px] font-extrabold transition ${!selected ? "border-pilot-400/40 bg-pilot-500/15 text-pilot-200" : "border-white/[0.08] bg-white/[0.035] text-slate-500 hover:text-slate-200"}`}>Tümü</button>{values.map((value) => <button key={value} type="button" onClick={() => onSelect(value)} className={`rounded-full border px-3 py-1.5 text-[10px] font-extrabold transition ${normalize(selected) === normalize(value) ? "border-pilot-400/40 bg-pilot-500/15 text-pilot-200" : "border-white/[0.08] bg-white/[0.035] text-slate-500 hover:text-slate-200"}`}>{value}</button>)}</div></div>;
 }
 
 function NumberBox({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
@@ -613,6 +677,13 @@ function sortPrograms(a: UniversityProgram, b: UniversityProgram, sort: SortKey)
   const rankingA = hasKnownRanking(a.ranking) ? a.ranking : Number.MAX_SAFE_INTEGER;
   const rankingB = hasKnownRanking(b.ranking) ? b.ranking : Number.MAX_SAFE_INTEGER;
   return rankingA - rankingB;
+}
+
+function suggestOptions(options: AtlasOption[], value: string, limit: number): AtlasOption[] {
+  const normalizedValue = normalize(value);
+  return options
+    .filter((option) => !normalizedValue || normalize(option.label).includes(normalizedValue))
+    .slice(0, limit);
 }
 
 function isFiltered(filters: LiveFilters): boolean {
