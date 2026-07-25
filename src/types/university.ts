@@ -40,6 +40,15 @@ export interface ProfessorProfile {
   courses: string[];
 }
 
+export interface AcademicStaffSummary {
+  professor: number;
+  associateProfessor: number;
+  doctorFacultyMember: number;
+  lecturer: number;
+  researchAssistant: number;
+  total: number;
+}
+
 export interface RankingHistoryItem {
   year: number;
   ranking: number;
@@ -74,6 +83,15 @@ export interface UniversityProgram {
   atlasYear?: number;
   academicHierarchy?: string;
   rankingHistory?: RankingHistoryItem[];
+  educationLevel?: "Lisans" | "Önlisans";
+  educationType?: string;
+  educationLanguage?: string;
+  educationDuration?: number;
+  occupancy?: string;
+  placed?: number;
+  previousRanking?: number;
+  previousBaseScore?: number;
+  academicStaffSummary?: AcademicStaffSummary;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,6 +123,15 @@ export type UniversityFormValues = Pick<
   | "atlasYear"
   | "academicHierarchy"
   | "rankingHistory"
+  | "educationLevel"
+  | "educationType"
+  | "educationLanguage"
+  | "educationDuration"
+  | "occupancy"
+  | "placed"
+  | "previousRanking"
+  | "previousBaseScore"
+  | "academicStaffSummary"
 >;
 
 export type PageKey =
