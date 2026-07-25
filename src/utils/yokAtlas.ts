@@ -33,13 +33,9 @@ const ACADEMIC_ENDPOINT = "/local-yok-akademik";
 const ACADEMIC_PAGE_ENDPOINT = "/local-yok-akademik-page";
 
 export function formatCurrency(value?: number | string | null): string {
-  const numericValue = typeof value === "string" ? parseNumber(value) : value;
+  const numericValue = parseNumber(value);
 
-  if (
-    typeof numericValue !== "number" ||
-    !Number.isFinite(numericValue) ||
-    numericValue <= 0
-  ) {
+  if (!numericValue || numericValue <= 0) {
     return "—";
   }
 
@@ -139,41 +135,67 @@ function createAtlasPayloads(filters: YokAtlasSearchFilters): Record<string, unk
   const program = cleanText(filters.program);
   const university = cleanText(filters.university);
   const city = cleanText(filters.city);
-  const pointType = cleanText(filters.pointType);
+  const pointType = cleanText(filters.pointType).toUpperCase();
   const universityType = cleanText(filters.universityType);
   const keyword = [query, program, university, city].filter(Boolean).join(" ");
+  const minRanking = cleanText(filters.minRanking) || "0";
+  const maxRanking = cleanText(filters.maxRanking) || "3000000";
 
   return [
-    {
+    compactPayload({
       search: keyword,
-      q: keyword,
-      program,
-      universite: university,
-      sehir: city,
-      puan_turu: pointType,
-      universite_turu: universityType,
-      page: 1,
-      limit: 100,
-    },
-    {
-      keyword,
-      program_adi: program || query,
-      universite_adi: university,
+      start: 0,
+      length: 100,
+      uni_adi: university,
+      program_adi: program,
       sehir_adi: city,
       puan_turu: pointType,
       universite_turu: universityType,
-      sayfa: 1,
-      adet: 100,
-    },
-    {
+      ust_bs: minRanking,
+      alt_bs: maxRanking,
+    }),
+    compactPayload({
+      q: keyword,
+      keyword,
+      page: 1,
+      limit: 100,
+      universite: university,
+      universite_adi: university,
+      program,
+      program_adi: program,
+      sehir: city,
+      sehir_adi: city,
+      puan_turu: pointType,
+      universite_turu: universityType,
+      min_basari_sirasi: minRanking,
+      max_basari_sirasi: maxRanking,
+    }),
+    compactPayload({
       arama: keyword,
-      bolum: program || query,
+      uni_adi: university || query,
+      program_adi: program,
+      sehir_adi: city,
+      start: 0,
+      length: 100,
+      search: "",
+      ust_bs: minRanking,
+      alt_bs: maxRanking,
+    }),
+    compactPayload({
+      arama: keyword || program || university || city,
+      bolum: program,
       universite: university,
       il: city,
       puanTuru: pointType,
       tur: universityType,
-    },
+    }),
   ];
+}
+
+function compactPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined && value !== null),
+  );
 }
 
 function mapAtlasProgram(value: unknown): UniversityProgram | null {
@@ -186,6 +208,7 @@ function mapAtlasProgram(value: unknown): UniversityProgram | null {
     "universite",
     "universiteAd",
     "univ_adi",
+    "uni_adi",
     "uadi",
     "name",
   ]);
@@ -198,21 +221,43 @@ function mapAtlasProgram(value: unknown): UniversityProgram | null {
     "program",
     "padi",
   ]);
-  const city = pickString(value, ["city", "il", "sehir", "sehirAdi", "ilAdi", "cityName"]);
+  const city = pickString(value, [
+    "city",
+    "il",
+    "sehir",
+    "sehirAdi",
+    "sehir_adi",
+    "ilAdi",
+    "cityName",
+  ]);
   const atlasCode = pickString(value, [
     "atlasCode",
     "programKodu",
     "program_kodu",
     "yopKodu",
     "yop_kodu",
+    "yop_kodu_program",
     "kod",
     "code",
     "id",
   ]);
   const pointType = pickString(value, ["pointType", "puanTuru", "puan_turu", "puan"]);
-  const universityType = pickString(value, ["universityType", "universiteTuru", "universite_turu", "tur", "type"]);
+  const universityType = pickString(value, [
+    "universityType",
+    "universiteTuru",
+    "universite_turu",
+    "tur",
+    "type",
+  ]);
   const facultyName = pickString(value, ["facultyName", "fakulte", "fakulteAdi", "fakulte_adi"]);
-  const scholarship = pickString(value, ["scholarship", "burs", "bursDurumu", "ucretBurs", "burs_orani"]);
+  const scholarship = pickString(value, [
+    "scholarship",
+    "burs",
+    "bursDurumu",
+    "ucretBurs",
+    "ucret_burs",
+    "burs_orani",
+  ]);
   const academicLink = pickString(value, [
     "academicStaffUrl",
     "akademikLink",
@@ -232,11 +277,13 @@ function mapAtlasProgram(value: unknown): UniversityProgram | null {
       "min_basari_sirasi",
       "siralama",
       "enKucukBasariSirasi",
+      "tbs",
+      "tabanBasariSirasi",
       "bs",
     ]),
   );
   const baseScore = parseNumber(
-    pickValue(value, ["baseScore", "tabanPuan", "taban_puan", "minPuan", "min_puan", "puan"]),
+    pickValue(value, ["baseScore", "tabanPuan", "taban_puan", "minPuan", "min_puan", "taban", "puan"]),
   );
   const quota = parseNumber(
     pickValue(value, ["quota", "kontenjan", "genelKontenjan", "kontenjan_sayi"]),
@@ -265,7 +312,7 @@ function mapAtlasProgram(value: unknown): UniversityProgram | null {
     professors: [],
     atlasCode: atlasCode || undefined,
     atlasUrl: normalizeAtlasUrl(rawAtlasUrl, atlasCode),
-    academicStaffUrl: academicLink || undefined,
+    academicStaffUrl: academicLink || atlasCode || undefined,
     scholarship: scholarship || undefined,
     tuitionFee: tuitionFee || undefined,
     baseScore: baseScore || undefined,
@@ -350,11 +397,11 @@ function pickProfileTexts(texts: string[], keywords: string[]): string[] {
 }
 
 function extractRows(value: unknown, depth = 0): unknown[] {
-  if (depth > 5) return [];
+  if (depth > 6) return [];
   if (Array.isArray(value)) return value;
   if (!isRecord(value)) return [];
 
-  for (const key of ["data", "results", "items", "rows", "programs", "programlar", "tercihler", "list", "content"]) {
+  for (const key of ["data", "aaData", "results", "items", "rows", "programs", "programlar", "tercihler", "list", "content"]) {
     const rows = extractRows(value[key], depth + 1);
     if (rows.length > 0) return rows;
   }
@@ -374,7 +421,7 @@ function toAtlasOption(value: unknown): AtlasOption | null {
   }
   if (!isRecord(value)) return null;
 
-  const label = pickString(value, ["label", "text", "name", "ad", "adi", "title", "value", "programAdi", "universiteAdi", "ilAdi"]);
+  const label = pickString(value, ["label", "text", "name", "ad", "adi", "title", "value", "programAdi", "program_adi", "universiteAdi", "uni_adi", "ilAdi", "sehir_adi"]);
   const id = pickString(value, ["id", "kod", "code", "value"]) || label;
   return label ? { id: slugify(id), label, value: label } : null;
 }
@@ -435,8 +482,9 @@ function parseFacilities(value: Record<string, unknown>): string[] {
   return uniqueStrings([
     pickString(value, ["ogretimDili", "ogretim_dili", "language"]),
     pickString(value, ["egitimSuresi", "egitim_suresi", "sure"]),
-    pickString(value, ["burs", "bursDurumu", "scholarship"]),
-    pickString(value, ["programTuru", "program_turu"]),
+    pickString(value, ["burs", "bursDurumu", "scholarship", "ucret_burs"]),
+    pickString(value, ["programTuru", "program_turu", "ogretim_turu"]),
+    pickString(value, ["doluluk"]),
   ]);
 }
 
@@ -459,8 +507,26 @@ function pickValue(value: Record<string, unknown>, keys: string[]): unknown {
 
 function parseNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const parsed = parseNumber(item);
+      if (parsed) return parsed;
+    }
+    return undefined;
+  }
+  if (isRecord(value)) {
+    for (const item of Object.values(value)) {
+      const parsed = parseNumber(item);
+      if (parsed) return parsed;
+    }
+    return undefined;
+  }
   if (typeof value !== "string") return undefined;
-  const normalized = value.replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", ".");
+  const firstPiece = value.split("+")[0] ?? value;
+  const normalized = firstPiece
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\.(?=\d{3}(\D|$))/g, "")
+    .replace(",", ".");
   const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
